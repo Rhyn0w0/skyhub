@@ -91,4 +91,44 @@ public final class SkyHubTheme {
         String trimmed = font.plainSubstrByWidth(text, Math.max(0, maxWidth - ellW));
         return trimmed + ellipsis;
     }
+
+    /**
+     * Draws a crisp pixel chevron (right when collapsed, down when expanded) inside a 7x7 box.
+     */
+    public static void drawChevron(GuiGraphicsExtractor g, int x, int y, boolean expanded, int color) {
+        if (expanded) {
+            // Down-pointing chevron (7x4)
+            g.fill(x, y + 1, x + 7, y + 2, color);
+            g.fill(x + 1, y + 2, x + 6, y + 3, color);
+            g.fill(x + 2, y + 3, x + 5, y + 4, color);
+            g.fill(x + 3, y + 4, x + 4, y + 5, color);
+        } else {
+            // Right-pointing chevron (4x7)
+            g.fill(x + 1, y, x + 2, y + 7, color);
+            g.fill(x + 2, y + 1, x + 3, y + 6, color);
+            g.fill(x + 3, y + 2, x + 4, y + 5, color);
+            g.fill(x + 4, y + 3, x + 5, y + 4, color);
+        }
+    }
+
+    /**
+     * Draws a crisp 10x10 pixel-art circular refresh icon centered in a square button.
+     */
+    public static void drawRefreshIcon(GuiGraphicsExtractor g, int cx, int cy, int color) {
+        int ox = cx - 5;
+        int oy = cy - 5;
+        // Top arc
+        g.fill(ox + 3, oy + 1, ox + 8, oy + 2, color);
+        g.fill(ox + 2, oy + 2, ox + 3, oy + 3, color);
+        // Left arc
+        g.fill(ox + 1, oy + 3, ox + 2, oy + 7, color);
+        // Bottom arc
+        g.fill(ox + 2, oy + 7, ox + 3, oy + 8, color);
+        g.fill(ox + 3, oy + 8, ox + 7, oy + 9, color);
+        g.fill(ox + 7, oy + 7, ox + 8, oy + 8, color);
+        // Arrowhead on top-right
+        g.fill(ox + 7, oy, ox + 8, oy + 4, color);
+        g.fill(ox + 8, oy + 1, ox + 9, oy + 4, color);
+        g.fill(ox + 6, oy + 3, ox + 9, oy + 4, color);
+    }
 }

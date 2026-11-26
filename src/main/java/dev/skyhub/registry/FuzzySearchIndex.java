@@ -1,5 +1,6 @@
 package dev.skyhub.registry;
 
+import dev.skyhub.model.FeatureCategory;
 import dev.skyhub.model.ModCatalog;
 import dev.skyhub.model.SettingEntry;
 
@@ -17,9 +18,14 @@ public final class FuzzySearchIndex {
     public record FilterOptions(
         String query,
         String selectedModId,
+        FeatureCategory selectedCategory,
         boolean onlyCurrentlyOn,
         boolean onlySkyBlockMods
-    ) {}
+    ) {
+        public FilterOptions(String query, String selectedModId, boolean onlyCurrentlyOn, boolean onlySkyBlockMods) {
+            this(query, selectedModId, null, onlyCurrentlyOn, onlySkyBlockMods);
+        }
+    }
 
     public record SearchMatch(SettingEntry entry, int score) {}
 
@@ -36,6 +42,9 @@ public final class FuzzySearchIndex {
         for (SettingEntry entry : all) {
             if (opts.selectedModId() != null && !opts.selectedModId().isBlank()
                 && !opts.selectedModId().equals(entry.modId())) {
+                continue;
+            }
+            if (opts.selectedCategory() != null && FeatureCategory.classify(entry) != opts.selectedCategory()) {
                 continue;
             }
             if (opts.onlySkyBlockMods() && !ModCatalog.isSkyBlockMod(entry.modId())) {

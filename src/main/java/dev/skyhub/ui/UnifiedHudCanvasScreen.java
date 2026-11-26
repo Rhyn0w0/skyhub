@@ -1,5 +1,7 @@
 package dev.skyhub.ui;
 
+import dev.skyhub.config.SkyHubConfig;
+import dev.skyhub.model.FeatureCategory;
 import dev.skyhub.model.HudWidget;
 import dev.skyhub.model.ModCatalog;
 import dev.skyhub.registry.UnifiedRegistry;
@@ -11,6 +13,7 @@ import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -21,41 +24,95 @@ import java.util.Set;
 /**
  * Phase 2 Core UI: Unified Drag-and-Drop HUD Canvas across SkyHanni, Skyblocker,
  * Odin, SkyOcean, CustomScoreboard, and Stella.
- * Edits live HUD coordinates/scale directly and invokes each dirty mod's native save hook.
+ * Features Mod, Feature-Type, and Visibility dropdown filters, corner drag-resizing,
+ * Shift-to-bypass alignment snapping, and a hoverable Help (?) controls popover.
  */
 public final class UnifiedHudCanvasScreen extends Screen {
     private static final int SNAP_THRESHOLD_PX = 5;
     private static final int TOOLBAR_H = 30;
+    private static final int DROPDOWN_ROW_H = 20;
+    private static final int DROPDOWN_MAX_VISIBLE = 10;
+
+    private enum OpenDropdown {
+        NONE, MOD, TYPE, VISIBILITY
+    }
+
+    public enum VisibilityFilter {
+        ALL("All HUDs", SkyHubTheme.ACCENT_CYAN),
+        ACTIVE("Active", SkyHubTheme.ACCENT_GREEN),
+        DISABLED("Disabled", SkyHubTheme.ACCENT_AMBER);
+
+        private final String label;
+        private final int accentColor;
+
+        VisibilityFilter(String label, int accentColor) {
+            this.label = label;
+            this.accentColor = accentColor;
+        }
+
+        public String label() { return label; }
+        public int accentColor() { return accentColor; }
+    }
+
+    private record DropdownItem(
+        String modId,
+        FeatureCategory category,
+        VisibilityFilter visibility,
+        String label,
+        int count,
+        int accentColor
+    ) {}
+
+    private static final String[][] HELP_ROWS = {
+        { "Drag widget",   "Move position" },
+        { "Drag corners",  "Resize scale" },
+        { "Arrow keys",    "Nudge 1px (Shift: 5px)" },
+        { "Hold Shift",    "Bypass snap guides" },
+        { "Right-click",   "Toggle widget ON/OFF" },
+        { "Tab",           "Back to Settings Hub" },
+        { "Esc",           "Save & close" }
+    };
 
     private final Screen returnScreen;
 
-    private String filterModId = null; // null = All HUD mods
-    private boolean showHidden = true;
-    private boolean snapEnabled = true;
+    private String filterModId = null; // null = All Mods
+    private FeatureCategory filterType = null; // null = All Types
+    private VisibilityFilter visibilityFilter = VisibilityFilter.ALL;
+    private final boolean snapEnabled;
+
+    private OpenDropdown openDropdown = OpenDropdown.NONE;
+    private double dropdownScroll = 0;
 
     private HudWidget selectedWidget = null;
     private HudWidget draggingWidget = null;
     private int dragOffsetX = 0;
     private int dragOffsetY = 0;
+    private HudWidget resizingWidget = null;
+    private HudSnapEngine.ResizeCorner resizeCorner = null;
+    private int resizeAnchorX = 0;
+    private int resizeAnchorY = 0;
     private List<HudSnapEngine.SnapGuide> activeGuides = List.of();
 
     private List<HudWidget> visibleWidgets = List.of();
-    private List<ModFilterPill> modFilterPills = List.of();
+    private List<DropdownItem> modDropdownItems = List.of();
+    private List<DropdownItem> typeDropdownItems = List.of();
+    private List<DropdownItem> visibilityDropdownItems = List.of();
 
     private String toast = "";
     private long toastUntil = 0L;
 
     // Toolbar button positions
     private int backBtnX, backBtnW;
-    private int hiddenBtnX, hiddenBtnW;
-    private int snapBtnX, snapBtnW;
-    private int saveBtnX, saveBtnW;
-
-    private record ModFilterPill(String modId, String label, int accentColor, int x, int w) {}
+    private int modDropX, modDropW;
+    private int typeDropX, typeDropW;
+    private int visDropX, visDropW;
+    private int helpBtnX, helpBtnSize;
+    private int doneBtnX, doneBtnW;
 
     public UnifiedHudCanvasScreen(Screen returnScreen) {
         super(Component.translatable("skyhub.hud.title"));
         this.returnScreen = returnScreen;
+        this.snapEnabled = SkyHubConfig.get().hudSnappingDefault();
     }
 
     @Override
@@ -64,60 +121,115 @@ public final class UnifiedHudCanvasScreen extends Screen {
         rebuildVisibleWidgets();
     }
 
+    private boolean matchesVisibility(HudWidget w, VisibilityFilter filter) {
+        return switch (filter) {
+            case ALL -> true;
+            case ACTIVE -> w.isEnabled();
+            case DISABLED -> !w.isEnabled();
+        };
+    }
+
     private void rebuildVisibleWidgets() {
         List<HudWidget> all = UnifiedRegistry.getInstance().hudWidgets();
 
-        // Build distinct mod filter pills
-        Map<String, String> hudMods = new LinkedHashMap<>();
-        for (HudWidget w : all) {
-            hudMods.putIfAbsent(w.modId(), w.modName());
-        }
+        Map<String, String> modNames = new LinkedHashMap<>();
+        Map<String, Integer> modCounts = new LinkedHashMap<>();
+        int totalForModMenu = 0;
+
+        Map<FeatureCategory, Integer> typeCounts = new EnumMap<>(FeatureCategory.class);
+        int totalForTypeMenu = 0;
+
+        int visAllCount = 0;
+        int visActiveCount = 0;
+        int visDisabledCount = 0;
 
         List<HudWidget> filtered = new ArrayList<>();
         for (HudWidget w : all) {
-            if (filterModId != null && !filterModId.equals(w.modId())) continue;
-            if (!showHidden && !w.isEnabled()) continue;
-            filtered.add(w);
-        }
-        visibleWidgets = filtered;
+            FeatureCategory wType = FeatureCategory.classify(w);
+            boolean modOk = filterModId == null || filterModId.equals(w.modId());
+            boolean typeOk = filterType == null || wType == filterType;
+            boolean visOk = matchesVisibility(w, visibilityFilter);
 
+            if (typeOk && visOk) {
+                modNames.putIfAbsent(w.modId(), w.modName());
+                modCounts.merge(w.modId(), 1, Integer::sum);
+                totalForModMenu++;
+            }
+
+            if (modOk && visOk) {
+                typeCounts.merge(wType, 1, Integer::sum);
+                totalForTypeMenu++;
+            }
+
+            if (modOk && typeOk) {
+                visAllCount++;
+                if (w.isEnabled()) visActiveCount++;
+                else visDisabledCount++;
+            }
+
+            if (modOk && typeOk && visOk) {
+                filtered.add(w);
+            }
+        }
+
+        List<DropdownItem> modItems = new ArrayList<>();
+        modItems.add(new DropdownItem(null, null, null, "All Mods", totalForModMenu, SkyHubTheme.ACCENT_CYAN));
+        for (Map.Entry<String, String> e : modNames.entrySet()) {
+            modItems.add(new DropdownItem(
+                e.getKey(), null, null, e.getValue(),
+                modCounts.getOrDefault(e.getKey(), 0),
+                ModCatalog.accentColor(e.getKey())
+            ));
+        }
+        modDropdownItems = modItems;
+
+        List<DropdownItem> typeItems = new ArrayList<>();
+        typeItems.add(new DropdownItem(null, null, null, "All Types", totalForTypeMenu, SkyHubTheme.ACCENT_CYAN));
+        for (FeatureCategory cat : FeatureCategory.values()) {
+            int c = typeCounts.getOrDefault(cat, 0);
+            if (c > 0 || cat == filterType) {
+                typeItems.add(new DropdownItem(null, cat, null, cat.displayName(), c, cat.accentColor()));
+            }
+        }
+        typeDropdownItems = typeItems;
+
+        visibilityDropdownItems = List.of(
+            new DropdownItem(null, null, VisibilityFilter.ALL, VisibilityFilter.ALL.label(), visAllCount, VisibilityFilter.ALL.accentColor()),
+            new DropdownItem(null, null, VisibilityFilter.ACTIVE, VisibilityFilter.ACTIVE.label(), visActiveCount, VisibilityFilter.ACTIVE.accentColor()),
+            new DropdownItem(null, null, VisibilityFilter.DISABLED, VisibilityFilter.DISABLED.label(), visDisabledCount, VisibilityFilter.DISABLED.accentColor())
+        );
+
+        visibleWidgets = filtered;
         if (selectedWidget != null && !visibleWidgets.contains(selectedWidget)) {
             selectedWidget = null;
         }
 
-        computeToolbarLayout(hudMods);
+        computeToolbarLayout();
     }
 
-    private void computeToolbarLayout(Map<String, String> hudMods) {
+    private void computeToolbarLayout() {
         int x = 8;
         backBtnX = x;
-        backBtnW = 78;
+        backBtnW = 56;
         x += backBtnW + 6;
 
-        List<ModFilterPill> pills = new ArrayList<>();
-        int allW = 30;
-        pills.add(new ModFilterPill(null, "All", SkyHubTheme.ACCENT_CYAN, x, allW));
-        x += allW + 4;
-
         int right = width - 8;
-        saveBtnW = 74;
-        saveBtnX = right - saveBtnW;
+        doneBtnW = 46;
+        doneBtnX = right - doneBtnW;
 
-        snapBtnW = 58;
-        snapBtnX = saveBtnX - 5 - snapBtnW;
+        helpBtnSize = 20;
+        helpBtnX = doneBtnX - 5 - helpBtnSize;
 
-        hiddenBtnW = 68;
-        hiddenBtnX = snapBtnX - 5 - hiddenBtnW;
+        int avail = Math.max(210, helpBtnX - x - 10);
+        visDropW = Math.min(92, Math.max(72, avail / 4));
+        int rem = Math.max(120, avail - visDropW - 12);
+        int each = Math.min(134, Math.max(74, rem / 2));
 
-        int maxPillRight = hiddenBtnX - 10;
-        for (Map.Entry<String, String> e : hudMods.entrySet()) {
-            String shortLabel = ModCatalog.shortLabel(e.getKey(), e.getValue());
-            int pw = Math.max(34, font.width(shortLabel) + 12);
-            if (x + pw > maxPillRight) break;
-            pills.add(new ModFilterPill(e.getKey(), shortLabel, ModCatalog.accentColor(e.getKey()), x, pw));
-            x += pw + 4;
-        }
-        modFilterPills = pills;
+        modDropX = x;
+        modDropW = each;
+        typeDropX = modDropX + modDropW + 6;
+        typeDropW = each;
+        visDropX = typeDropX + typeDropW + 6;
     }
 
     private void showToast(String msg) {
@@ -125,21 +237,66 @@ public final class UnifiedHudCanvasScreen extends Screen {
         this.toastUntil = System.currentTimeMillis() + 2400L;
     }
 
+    private List<DropdownItem> activeDropdownItems() {
+        return switch (openDropdown) {
+            case MOD -> modDropdownItems;
+            case TYPE -> typeDropdownItems;
+            case VISIBILITY -> visibilityDropdownItems;
+            case NONE -> List.of();
+        };
+    }
+
+    private int activeDropdownX() {
+        return switch (openDropdown) {
+            case MOD -> modDropX;
+            case TYPE -> typeDropX;
+            case VISIBILITY -> visDropX;
+            case NONE -> 0;
+        };
+    }
+
+    private int activeDropdownW() {
+        int base = switch (openDropdown) {
+            case MOD -> modDropW;
+            case TYPE -> typeDropW;
+            case VISIBILITY -> visDropW;
+            case NONE -> 120;
+        };
+        return Math.max(openDropdown == OpenDropdown.VISIBILITY ? 124 : 152, base);
+    }
+
+    private int activeDropdownHeight() {
+        int rows = Math.min(DROPDOWN_MAX_VISIBLE, activeDropdownItems().size());
+        return Math.max(DROPDOWN_ROW_H, rows * DROPDOWN_ROW_H + 6);
+    }
+
+    private void clampDropdownScroll() {
+        int totalH = activeDropdownItems().size() * DROPDOWN_ROW_H;
+        int viewH = DROPDOWN_MAX_VISIBLE * DROPDOWN_ROW_H;
+        int max = Math.max(0, totalH - viewH);
+        dropdownScroll = Math.max(0, Math.min(max, dropdownScroll));
+    }
+
+    private boolean isHelpHovered(int mouseX, int mouseY) {
+        return mouseX >= helpBtnX && mouseX <= helpBtnX + helpBtnSize
+            && mouseY >= 5 && mouseY <= 5 + helpBtnSize;
+    }
+
     @Override
     public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
-        // Light translucent scrim so the live game world remains visible behind HUD boxes
         g.fill(0, 0, width, height, 0x7A070A10);
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        computeToolbarLayout();
         extractBackground(g, mouseX, mouseY, partialTick);
 
-        // Subtle alignment grid centerlines (very faint)
+        // Subtle alignment centerlines
         g.verticalLine(width / 2, TOOLBAR_H, height, 0x22FFFFFF);
         g.horizontalLine(0, width, height / 2, 0x22FFFFFF);
 
-        // Render active snap guides when dragging
+        // Active snap guides when dragging
         for (HudSnapEngine.SnapGuide guide : activeGuides) {
             int color = guide.isCenterGuide() ? SkyHubTheme.GUIDE_CENTER : SkyHubTheme.GUIDE_EDGE;
             if (guide.vertical()) {
@@ -151,31 +308,24 @@ public final class UnifiedHudCanvasScreen extends Screen {
 
         // Render HUD widget boxes
         if (visibleWidgets.isEmpty()) {
-            g.centeredText(font, "No HUD widgets discovered for the current filter.", width / 2, height / 2 - 8, SkyHubTheme.TEXT_PRIMARY);
-            g.centeredText(font, "Join Hypixel SkyBlock or open a mod's native menu to initialize HUD registries.", width / 2, height / 2 + 8, SkyHubTheme.TEXT_SECONDARY);
+            g.centeredText(font, "No HUD widgets matched the current filters.", width / 2, height / 2 - 8, SkyHubTheme.TEXT_PRIMARY);
+            g.centeredText(font, "Try changing the Mod, Type, or Visibility dropdowns.", width / 2, height / 2 + 8, SkyHubTheme.TEXT_SECONDARY);
         } else {
             for (HudWidget w : visibleWidgets) {
-                if (w == selectedWidget) continue; // draw selected on top last
-                renderWidgetBox(g, w, false, isOverWidget(w, mouseX, mouseY));
+                if (w == selectedWidget) continue;
+                renderWidgetBox(g, w, false, openDropdown == OpenDropdown.NONE && isOverWidget(w, mouseX, mouseY), mouseX, mouseY);
             }
             if (selectedWidget != null) {
-                renderWidgetBox(g, selectedWidget, true, isOverWidget(selectedWidget, mouseX, mouseY));
+                renderWidgetBox(g, selectedWidget, true, openDropdown == OpenDropdown.NONE && isOverWidget(selectedWidget, mouseX, mouseY), mouseX, mouseY);
             }
         }
 
         // Top floating toolbar
         renderToolbar(g, mouseX, mouseY);
 
-        // Bottom inspector pill for selected widget
+        // Bottom inspector pill ONLY when a widget is selected (bottom help bar moved to ? button)
         if (selectedWidget != null) {
             renderSelectedInspector(g, selectedWidget, mouseX, mouseY);
-        } else {
-            String help = "Drag widgets to move  \u00B7  Scroll to scale  \u00B7  Arrow keys nudge  \u00B7  Hold Shift to bypass snap";
-            int hw = font.width(help) + 18;
-            int hx = (width - hw) / 2;
-            int hy = height - 24;
-            SkyHubTheme.drawBox(g, hx, hy, hw, 18, 0xDD0C1018, SkyHubTheme.BORDER_SUBTLE);
-            g.centeredText(font, help, width / 2, hy + 5, SkyHubTheme.TEXT_SECONDARY);
         }
 
         if (System.currentTimeMillis() < toastUntil && !toast.isBlank()) {
@@ -183,9 +333,16 @@ public final class UnifiedHudCanvasScreen extends Screen {
             SkyHubTheme.drawBox(g, (width - tw) / 2, TOOLBAR_H + 8, tw, 18, 0xEE101824, SkyHubTheme.ACCENT_GREEN);
             g.centeredText(font, toast, width / 2, TOOLBAR_H + 13, SkyHubTheme.ACCENT_GREEN);
         }
+
+        // Render open dropdown OR hoverable Help popover on top of everything
+        if (openDropdown != OpenDropdown.NONE) {
+            renderDropdownMenu(g, mouseX, mouseY);
+        } else if (isHelpHovered(mouseX, mouseY)) {
+            renderHelpPopover(g);
+        }
     }
 
-    private void renderWidgetBox(GuiGraphicsExtractor g, HudWidget w, boolean selected, boolean hovered) {
+    private void renderWidgetBox(GuiGraphicsExtractor g, HudWidget w, boolean selected, boolean hovered, int mouseX, int mouseY) {
         int x = clampX(w.getX(), w.getScaledWidth());
         int y = clampY(w.getY(), w.getScaledHeight());
         int bw = w.getScaledWidth();
@@ -199,13 +356,14 @@ public final class UnifiedHudCanvasScreen extends Screen {
         int border = selected ? 0xFFFFFFFF : (hovered ? accent : SkyHubTheme.withAlpha(accent, enabled ? 0xCC : 0x55));
 
         SkyHubTheme.drawBox(g, x, y, bw, bh, fill, border);
-        if (selected) {
-            // Crisp corner handles
-            int hs = 4;
-            g.fill(x - 1, y - 1, x - 1 + hs, y - 1 + hs, accent);
-            g.fill(x + bw - hs + 1, y - 1, x + bw + 1, y - 1 + hs, accent);
-            g.fill(x - 1, y + bh - hs + 1, x - 1 + hs, y + bh + 1, accent);
-            g.fill(x + bw - hs + 1, y + bh - hs + 1, x + bw + 1, y + bh + 1, accent);
+        if (selected && w.canScale()) {
+            HudSnapEngine.ResizeCorner hoveredCorner = openDropdown == OpenDropdown.NONE
+                ? hitTestCornerHandle(w, mouseX, mouseY)
+                : null;
+            drawCornerHandle(g, x, y, accent, hoveredCorner == HudSnapEngine.ResizeCorner.NW || resizeCorner == HudSnapEngine.ResizeCorner.NW);
+            drawCornerHandle(g, x + bw, y, accent, hoveredCorner == HudSnapEngine.ResizeCorner.NE || resizeCorner == HudSnapEngine.ResizeCorner.NE);
+            drawCornerHandle(g, x, y + bh, accent, hoveredCorner == HudSnapEngine.ResizeCorner.SW || resizeCorner == HudSnapEngine.ResizeCorner.SW);
+            drawCornerHandle(g, x + bw, y + bh, accent, hoveredCorner == HudSnapEngine.ResizeCorner.SE || resizeCorner == HudSnapEngine.ResizeCorner.SE);
         }
 
         String tag = ModCatalog.shortLabel(w.modId(), w.modName());
@@ -228,29 +386,135 @@ public final class UnifiedHudCanvasScreen extends Screen {
         SkyHubTheme.drawPill(g, font, backBtnX, py, backBtnW, 20, "\u2190 Hub",
             SkyHubTheme.CARD_BG, SkyHubTheme.BORDER_SUBTLE, SkyHubTheme.TEXT_PRIMARY);
 
-        for (ModFilterPill pill : modFilterPills) {
-            boolean active = (pill.modId() == null && filterModId == null)
-                || (pill.modId() != null && pill.modId().equals(filterModId));
-            SkyHubTheme.drawPill(g, font, pill.x(), py, pill.w(), 20, pill.label(),
-                active ? SkyHubTheme.withAlpha(pill.accentColor(), 0x44) : SkyHubTheme.CARD_BG,
-                active ? pill.accentColor() : SkyHubTheme.BORDER_SUBTLE,
-                active ? SkyHubTheme.TEXT_PRIMARY : SkyHubTheme.TEXT_SECONDARY);
+        // Mod Dropdown
+        String modLabel = filterModId == null ? "Mod: All" : "Mod: " + resolveModName(filterModId);
+        int modAccent = filterModId == null ? SkyHubTheme.ACCENT_CYAN : ModCatalog.accentColor(filterModId);
+        boolean modActive = filterModId != null || openDropdown == OpenDropdown.MOD;
+        renderDropdownButton(g, modDropX, py, modDropW, 20, modLabel, modAccent, modActive, openDropdown == OpenDropdown.MOD);
+
+        // Type Dropdown
+        String typeLabel = filterType == null ? "Type: All" : "Type: " + filterType.displayName();
+        int typeAccent = filterType == null ? SkyHubTheme.ACCENT_CYAN : filterType.accentColor();
+        boolean typeActive = filterType != null || openDropdown == OpenDropdown.TYPE;
+        renderDropdownButton(g, typeDropX, py, typeDropW, 20, typeLabel, typeAccent, typeActive, openDropdown == OpenDropdown.TYPE);
+
+        // Visibility Dropdown (All HUDs / Active / Hidden)
+        boolean visActive = visibilityFilter != VisibilityFilter.ALL || openDropdown == OpenDropdown.VISIBILITY;
+        renderDropdownButton(g, visDropX, py, visDropW, 20, visibilityFilter.label(),
+            visibilityFilter.accentColor(), visActive, openDropdown == OpenDropdown.VISIBILITY);
+
+        // Square Help (?) Button
+        boolean helpHov = isHelpHovered(mouseX, mouseY);
+        SkyHubTheme.drawPill(g, font, helpBtnX, py, helpBtnSize, helpBtnSize, "?",
+            helpHov ? SkyHubTheme.CARD_SELECTED : SkyHubTheme.CARD_BG,
+            helpHov ? SkyHubTheme.ACCENT_CYAN : SkyHubTheme.BORDER_SUBTLE,
+            helpHov ? SkyHubTheme.ACCENT_CYAN : SkyHubTheme.TEXT_SECONDARY);
+
+        // Done Button
+        SkyHubTheme.drawPill(g, font, doneBtnX, py, doneBtnW, 20, "Done",
+            SkyHubTheme.ACCENT_GREEN_BG, SkyHubTheme.ACCENT_GREEN, SkyHubTheme.ACCENT_GREEN);
+    }
+
+    private void renderHelpPopover(GuiGraphicsExtractor g) {
+        int keyColW = 120;
+        int descColW = 128;
+        int pad = 10;
+        int popW = pad * 2 + keyColW + descColW;
+        int headerH = 20;
+        int rowH = 14;
+        int popH = headerH + HELP_ROWS.length * rowH + 8;
+
+        int px = Math.max(8, Math.min(width - popW - 8, helpBtnX + helpBtnSize - popW));
+        int py = TOOLBAR_H + 4;
+
+        SkyHubTheme.drawBox(g, px, py, popW, popH, 0xF80D121B, SkyHubTheme.ACCENT_CYAN);
+        g.text(font, "HUD Canvas Controls", px + pad, py + 6, SkyHubTheme.TEXT_PRIMARY, true);
+        g.horizontalLine(px + 6, px + popW - 6, py + headerH - 1, SkyHubTheme.BORDER_SUBTLE);
+
+        int y = py + headerH + 4;
+        for (String[] row : HELP_ROWS) {
+            g.text(font, row[0], px + pad, y, SkyHubTheme.ACCENT_CYAN, false);
+            g.text(font, row[1], px + pad + keyColW, y, SkyHubTheme.TEXT_SECONDARY, false);
+            y += rowH;
+        }
+    }
+
+    private void renderDropdownButton(
+        GuiGraphicsExtractor g,
+        int x,
+        int y,
+        int w,
+        int h,
+        String label,
+        int accent,
+        boolean active,
+        boolean open
+    ) {
+        int bg = open ? SkyHubTheme.CARD_SELECTED
+            : (active ? SkyHubTheme.withAlpha(accent, 0x33) : SkyHubTheme.CARD_BG);
+        int border = (open || active) ? accent : SkyHubTheme.BORDER_SUBTLE;
+        SkyHubTheme.drawBox(g, x, y, w, h, bg, border);
+
+        String trimmed = SkyHubTheme.truncate(font, label, Math.max(24, w - 20));
+        g.text(font, trimmed, x + 6, y + 6, active ? SkyHubTheme.TEXT_PRIMARY : SkyHubTheme.TEXT_SECONDARY, false);
+        SkyHubTheme.drawChevron(g, x + w - 12, y + 7, open, active ? accent : SkyHubTheme.TEXT_MUTED);
+    }
+
+    private void renderDropdownMenu(GuiGraphicsExtractor g, int mouseX, int mouseY) {
+        List<DropdownItem> items = activeDropdownItems();
+        int dx = Math.min(activeDropdownX(), Math.max(8, width - activeDropdownW() - 8));
+        int dy = TOOLBAR_H + 2;
+        int dw = activeDropdownW();
+        int dh = activeDropdownHeight();
+
+        SkyHubTheme.drawBox(g, dx, dy, dw, dh, 0xF80D121B, SkyHubTheme.BORDER_ACTIVE);
+        g.enableScissor(dx + 1, dy + 3, dx + dw - 1, dy + dh - 3);
+
+        int y = dy + 3 - (int) dropdownScroll;
+        for (DropdownItem item : items) {
+            if (y + DROPDOWN_ROW_H >= dy && y <= dy + dh) {
+                boolean selected = isDropdownItemSelected(item);
+                boolean hovered = mouseX >= dx + 2 && mouseX <= dx + dw - 2
+                    && mouseY >= y && mouseY < y + DROPDOWN_ROW_H
+                    && mouseY >= dy + 2 && mouseY <= dy + dh - 2;
+
+                if (selected || hovered) {
+                    g.fill(dx + 2, y, dx + dw - 2, y + DROPDOWN_ROW_H,
+                        selected ? SkyHubTheme.CARD_SELECTED : SkyHubTheme.CARD_HOVER);
+                }
+
+                g.fill(dx + 6, y + 5, dx + 9, y + DROPDOWN_ROW_H - 5, item.accentColor());
+
+                String cnt = String.valueOf(item.count());
+                int cntW = font.width(cnt);
+                g.text(font, cnt, dx + dw - 8 - cntW, y + 6, SkyHubTheme.TEXT_MUTED, false);
+
+                int maxLabelW = Math.max(30, dw - 24 - cntW);
+                g.text(font, SkyHubTheme.truncate(font, item.label(), maxLabelW),
+                    dx + 14, y + 6,
+                    selected ? SkyHubTheme.TEXT_PRIMARY : SkyHubTheme.TEXT_SECONDARY, false);
+            }
+            y += DROPDOWN_ROW_H;
         }
 
-        SkyHubTheme.drawPill(g, font, hiddenBtnX, py, hiddenBtnW, 20,
-            showHidden ? "All HUDs" : "Active",
-            showHidden ? SkyHubTheme.CARD_BG : SkyHubTheme.ACCENT_GREEN_BG,
-            showHidden ? SkyHubTheme.BORDER_SUBTLE : SkyHubTheme.ACCENT_GREEN,
-            showHidden ? SkyHubTheme.TEXT_SECONDARY : SkyHubTheme.ACCENT_GREEN);
+        g.disableScissor();
+    }
 
-        SkyHubTheme.drawPill(g, font, snapBtnX, py, snapBtnW, 20,
-            snapEnabled ? "Snap: ON" : "Snap: OFF",
-            snapEnabled ? SkyHubTheme.withAlpha(SkyHubTheme.ACCENT_CYAN, 0x33) : SkyHubTheme.CARD_BG,
-            snapEnabled ? SkyHubTheme.ACCENT_CYAN : SkyHubTheme.BORDER_SUBTLE,
-            snapEnabled ? SkyHubTheme.ACCENT_CYAN : SkyHubTheme.TEXT_MUTED);
+    private boolean isDropdownItemSelected(DropdownItem item) {
+        return switch (openDropdown) {
+            case MOD -> (item.modId() == null && filterModId == null)
+                || (item.modId() != null && item.modId().equals(filterModId));
+            case TYPE -> item.category() == filterType;
+            case VISIBILITY -> item.visibility() == visibilityFilter;
+            case NONE -> false;
+        };
+    }
 
-        SkyHubTheme.drawPill(g, font, saveBtnX, py, saveBtnW, 20, "Save & Close",
-            SkyHubTheme.ACCENT_GREEN_BG, SkyHubTheme.ACCENT_GREEN, SkyHubTheme.ACCENT_GREEN);
+    private String resolveModName(String modId) {
+        for (DropdownItem item : modDropdownItems) {
+            if (modId.equals(item.modId())) return item.label();
+        }
+        return ModCatalog.shortLabel(modId, modId);
     }
 
     private void renderSelectedInspector(GuiGraphicsExtractor g, HudWidget w, int mouseX, int mouseY) {
@@ -299,30 +563,64 @@ public final class UnifiedHudCanvasScreen extends Screen {
         double my = event.y();
         int button = event.button();
 
+        // 0. Open dropdown click / dismiss
+        if (openDropdown != OpenDropdown.NONE) {
+            int dx = Math.min(activeDropdownX(), Math.max(8, width - activeDropdownW() - 8));
+            int dy = TOOLBAR_H + 2;
+            int dw = activeDropdownW();
+            int dh = activeDropdownHeight();
+            if (mx >= dx && mx <= dx + dw && my >= dy && my <= dy + dh) {
+                int y = dy + 3 - (int) dropdownScroll;
+                for (DropdownItem item : activeDropdownItems()) {
+                    if (my >= y && my < y + DROPDOWN_ROW_H) {
+                        if (openDropdown == OpenDropdown.MOD) {
+                            filterModId = item.modId();
+                        } else if (openDropdown == OpenDropdown.TYPE) {
+                            filterType = item.category();
+                        } else if (openDropdown == OpenDropdown.VISIBILITY && item.visibility() != null) {
+                            visibilityFilter = item.visibility();
+                        }
+                        openDropdown = OpenDropdown.NONE;
+                        dropdownScroll = 0;
+                        rebuildVisibleWidgets();
+                        return true;
+                    }
+                    y += DROPDOWN_ROW_H;
+                }
+                return true;
+            }
+            if (my > TOOLBAR_H) {
+                openDropdown = OpenDropdown.NONE;
+                dropdownScroll = 0;
+                return true;
+            }
+        }
+
         // 1. Toolbar clicks
         if (my <= TOOLBAR_H) {
             if (mx >= backBtnX && mx <= backBtnX + backBtnW) {
+                openDropdown = OpenDropdown.NONE;
                 saveAllDirty();
                 minecraft.gui.setScreen(returnScreen != null ? returnScreen : new SkyHubScreen(null));
                 return true;
             }
-            for (ModFilterPill pill : modFilterPills) {
-                if (mx >= pill.x() && mx <= pill.x() + pill.w()) {
-                    filterModId = pill.modId();
-                    rebuildVisibleWidgets();
-                    return true;
-                }
-            }
-            if (mx >= hiddenBtnX && mx <= hiddenBtnX + hiddenBtnW) {
-                showHidden = !showHidden;
-                rebuildVisibleWidgets();
+            if (mx >= modDropX && mx <= modDropX + modDropW) {
+                openDropdown = (openDropdown == OpenDropdown.MOD) ? OpenDropdown.NONE : OpenDropdown.MOD;
+                dropdownScroll = 0;
                 return true;
             }
-            if (mx >= snapBtnX && mx <= snapBtnX + snapBtnW) {
-                snapEnabled = !snapEnabled;
+            if (mx >= typeDropX && mx <= typeDropX + typeDropW) {
+                openDropdown = (openDropdown == OpenDropdown.TYPE) ? OpenDropdown.NONE : OpenDropdown.TYPE;
+                dropdownScroll = 0;
                 return true;
             }
-            if (mx >= saveBtnX && mx <= saveBtnX + saveBtnW) {
+            if (mx >= visDropX && mx <= visDropX + visDropW) {
+                openDropdown = (openDropdown == OpenDropdown.VISIBILITY) ? OpenDropdown.NONE : OpenDropdown.VISIBILITY;
+                dropdownScroll = 0;
+                return true;
+            }
+            openDropdown = OpenDropdown.NONE;
+            if (mx >= doneBtnX && mx <= doneBtnX + doneBtnW) {
                 onClose();
                 return true;
             }
@@ -350,6 +648,7 @@ public final class UnifiedHudCanvasScreen extends Screen {
                     int tw = 44;
                     if (mx >= right - tw && mx <= right) {
                         selectedWidget.setEnabled(!selectedWidget.isEnabled());
+                        rebuildVisibleWidgets();
                         return true;
                     }
                     right -= (tw + 4);
@@ -369,13 +668,33 @@ public final class UnifiedHudCanvasScreen extends Screen {
             }
         }
 
-        // 3. Hit-test widgets (topmost / selected first)
+        // 3. Corner resize handles FIRST (before body drag)
+        if (button == 0 && selectedWidget != null && selectedWidget.canScale()) {
+            HudSnapEngine.ResizeCorner corner = hitTestCornerHandle(selectedWidget, mx, my);
+            if (corner != null) {
+                int wx = clampX(selectedWidget.getX(), selectedWidget.getScaledWidth());
+                int wy = clampY(selectedWidget.getY(), selectedWidget.getScaledHeight());
+                int ww = selectedWidget.getScaledWidth();
+                int wh = selectedWidget.getScaledHeight();
+
+                resizingWidget = selectedWidget;
+                resizeCorner = corner;
+                resizeAnchorX = (corner == HudSnapEngine.ResizeCorner.SE || corner == HudSnapEngine.ResizeCorner.NE)
+                    ? wx : (wx + ww);
+                resizeAnchorY = (corner == HudSnapEngine.ResizeCorner.SE || corner == HudSnapEngine.ResizeCorner.SW)
+                    ? wy : (wy + wh);
+                return true;
+            }
+        }
+
+        // 4. Hit-test widgets
         HudWidget hit = findWidgetAt(mx, my);
         if (hit != null) {
             selectedWidget = hit;
             if (button == 1 && hit.canToggle()) {
                 hit.setEnabled(!hit.isEnabled());
                 showToast(hit.name() + ": " + (hit.isEnabled() ? "ON" : "OFF"));
+                rebuildVisibleWidgets();
                 return true;
             }
             if (button == 0) {
@@ -392,6 +711,23 @@ public final class UnifiedHudCanvasScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double deltaX, double deltaY) {
+        if (resizingWidget != null && resizeCorner != null) {
+            HudSnapEngine.ResizeResult res = HudSnapEngine.computeCornerResize(
+                resizeCorner,
+                resizeAnchorX,
+                resizeAnchorY,
+                event.x(),
+                event.y(),
+                resizingWidget.getWidth(),
+                resizingWidget.getHeight(),
+                TOOLBAR_H + 2,
+                width,
+                height
+            );
+            resizingWidget.setScale(res.scale());
+            resizingWidget.setPosition(res.x(), res.y());
+            return true;
+        }
         if (draggingWidget == null) return false;
 
         int rawX = (int) Math.round(event.x()) - dragOffsetX;
@@ -427,6 +763,11 @@ public final class UnifiedHudCanvasScreen extends Screen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
+        if (resizingWidget != null) {
+            resizingWidget = null;
+            resizeCorner = null;
+            return true;
+        }
         if (draggingWidget != null) {
             draggingWidget = null;
             activeGuides = List.of();
@@ -437,13 +778,16 @@ public final class UnifiedHudCanvasScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        HudWidget target = findWidgetAt(mouseX, mouseY);
-        if (target == null) target = selectedWidget;
-        if (target != null && target.canScale()) {
-            double delta = scrollY > 0 ? 0.05 : -0.05;
-            target.setScale(target.getScale() + delta);
-            selectedWidget = target;
-            return true;
+        if (openDropdown != OpenDropdown.NONE) {
+            int dx = Math.min(activeDropdownX(), Math.max(8, width - activeDropdownW() - 8));
+            int dy = TOOLBAR_H + 2;
+            int dw = activeDropdownW();
+            int dh = activeDropdownHeight();
+            if (mouseX >= dx && mouseX <= dx + dw && mouseY >= dy && mouseY <= dy + dh) {
+                dropdownScroll -= scrollY * 20.0;
+                clampDropdownScroll();
+                return true;
+            }
         }
         return false;
     }
@@ -451,7 +795,13 @@ public final class UnifiedHudCanvasScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent event) {
         int key = event.key();
+        if (key == GLFW.GLFW_KEY_ESCAPE && openDropdown != OpenDropdown.NONE) {
+            openDropdown = OpenDropdown.NONE;
+            dropdownScroll = 0;
+            return true;
+        }
         if (key == GLFW.GLFW_KEY_TAB) {
+            openDropdown = OpenDropdown.NONE;
             saveAllDirty();
             minecraft.gui.setScreen(returnScreen != null ? returnScreen : new SkyHubScreen(null));
             return true;
@@ -504,6 +854,27 @@ public final class UnifiedHudCanvasScreen extends Screen {
                 return w;
             }
         }
+        return null;
+    }
+
+    private void drawCornerHandle(GuiGraphicsExtractor g, int cx, int cy, int accent, boolean active) {
+        int half = 3;
+        int fill = active ? 0xFFFFFFFF : accent;
+        int border = active ? accent : 0xFF0A0E15;
+        SkyHubTheme.drawBox(g, cx - half, cy - half, half * 2, half * 2, fill, border);
+    }
+
+    private HudSnapEngine.ResizeCorner hitTestCornerHandle(HudWidget w, double mx, double my) {
+        int x = clampX(w.getX(), w.getScaledWidth());
+        int y = clampY(w.getY(), w.getScaledHeight());
+        int bw = w.getScaledWidth();
+        int bh = w.getScaledHeight();
+        int r = 5;
+
+        if (Math.abs(mx - x) <= r && Math.abs(my - y) <= r) return HudSnapEngine.ResizeCorner.NW;
+        if (Math.abs(mx - (x + bw)) <= r && Math.abs(my - y) <= r) return HudSnapEngine.ResizeCorner.NE;
+        if (Math.abs(mx - x) <= r && Math.abs(my - (y + bh)) <= r) return HudSnapEngine.ResizeCorner.SW;
+        if (Math.abs(mx - (x + bw)) <= r && Math.abs(my - (y + bh)) <= r) return HudSnapEngine.ResizeCorner.SE;
         return null;
     }
 

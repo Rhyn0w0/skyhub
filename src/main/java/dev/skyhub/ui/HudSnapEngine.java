@@ -20,7 +20,64 @@ public final class HudSnapEngine {
 
     public record SnapResult(int x, int y, List<SnapGuide> guides) {}
 
+    public enum ResizeCorner {
+        NW, NE, SW, SE
+    }
+
+    public record ResizeResult(int x, int y, double scale) {}
+
     private HudSnapEngine() {}
+
+    /**
+     * Computes uniform scale and anchored top-left position when dragging one of the
+     * 4 corner handles of a HUD widget. Projects the drag vector onto the widget's
+     * aspect-ratio ray so dragging at any angle scales smoothly while keeping the
+     * opposite corner anchored in place.
+     */
+    public static ResizeResult computeCornerResize(
+        ResizeCorner corner,
+        int anchorX,
+        int anchorY,
+        double mouseX,
+        double mouseY,
+        int baseWidth,
+        int baseHeight,
+        int minY,
+        int screenWidth,
+        int screenHeight
+    ) {
+        double bw = Math.max(1.0, baseWidth);
+        double bh = Math.max(1.0, baseHeight);
+
+        double desiredW = switch (corner) {
+            case SE, NE -> mouseX - anchorX;
+            case SW, NW -> anchorX - mouseX;
+        };
+        double desiredH = switch (corner) {
+            case SE, SW -> mouseY - anchorY;
+            case NE, NW -> anchorY - mouseY;
+        };
+
+        // Closest point on the uniform-scale ray (s * bw, s * bh)
+        double rawScale = (desiredW * bw + desiredH * bh) / (bw * bw + bh * bh);
+        double clampedScale = Math.max(0.25, Math.min(4.0, Math.round(rawScale * 100.0) / 100.0));
+
+        int scaledW = Math.max(44, (int) Math.round(bw * clampedScale));
+        int scaledH = Math.max(18, (int) Math.round(bh * clampedScale));
+
+        int newX = switch (corner) {
+            case SE, NE -> anchorX;
+            case SW, NW -> anchorX - scaledW;
+        };
+        int newY = switch (corner) {
+            case SE, SW -> anchorY;
+            case NE, NW -> anchorY - scaledH;
+        };
+
+        newX = Math.max(0, Math.min(Math.max(0, screenWidth - scaledW), newX));
+        newY = Math.max(minY, Math.min(Math.max(minY, screenHeight - scaledH), newY));
+        return new ResizeResult(newX, newY, clampedScale);
+    }
 
     public static SnapResult snap(
         Box moving,

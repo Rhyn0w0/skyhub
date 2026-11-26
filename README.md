@@ -6,15 +6,18 @@ A unified settings hub, global fuzzy search, and drag-and-drop HUD canvas for po
 
 ## Features
 
-- **Unified Mod Hub & Global Fuzzy Search (`\` or `/skyhub`)**
-  - Search across every indexed SkyBlock mod simultaneously with multi-token fuzzy search (e.g. `odin term`, `sh farm`, `sb solver`, `pwdr`).
+- **Unified Settings Hub & Global Fuzzy Search (`\`, `/skyhub`, or `/skyhub config`)**
+  - iPad Settings–style layout with **recursive collapsible sections** and grouped setting cards.
+  - Browse by **Feature Type** by default (`Mod Settings`, `Dungeons`, `Mining`, `Farming & Garden`, `Fishing`, `Slayers`, `Crimson Isle`, `The End`, `Foraging & Hunting`, `Combat & Bosses`, `Economy & Bazaar`, `Inventory & Items`, `Chat & Party`, `HUD & Visuals`) or switch to **By Mod** in `/skyhub settings`.
+  - Global multi-token fuzzy search across all indexed mods (e.g. `odin term`, `sh farm`, `sb solver`, `pwdr`) that auto-expands matching sections.
   - Inline live controls (boolean toggles, numeric sliders + step buttons, enum cyclers, inline string editing, color swatches, reset-to-default).
-  - Instant **`ON Only`** filter to audit active features across all mods, plus **`SkyBlock`** / **`All Mods`** scope switching.
-  - Per-mod color badges, category breadcrumbs, and a left **Mod Switcher** with live adapter health indicators.
 - **Unified Drag-and-Drop HUD Canvas (`]` or `/skyhub hud`)**
   - Manage HUD positions and scales across **SkyHanni**, **Skyblocker**, **Odin**, **SkyOcean**, **CustomScoreboard**, and **Stella** on one shared canvas.
-  - Snap-to-edge, snap-to-screen-center, and snap-to-sibling-widget alignment guides (hold `Shift` to bypass snapping).
-  - Mouse-wheel scaling, arrow-key pixel nudging (`Shift` + arrows for 5px), right-click toggling, and per-mod filter pills.
+  - Filter widgets cleanly using composable **Mod**, **Type**, and **Visibility** (`All HUDs` / `Active` / `Disabled`) dropdowns.
+  - Drag corner handles to resize smoothly, drag widgets with snap-to-edge / snap-to-center / snap-to-widget guides (hold `Shift` to bypass snapping), nudge with arrow keys (`Shift` + arrows for 5px), and right-click to toggle ON/OFF.
+  - Hover the `?` toolbar button anytime for a quick controls reference.
+- **Skyblocker-Style Mod Settings (`/skyhub settings` or ModMenu)**
+  - Native vanilla Minecraft UI with full resource/texture pack support for configuring SkyHub's own preferences (`Group By`, `SkyBlock / All Mods`, `HUD Snap`), opening the config folder, and quick project links.
 - **No Duplicate Storage (PackCore Synced)**
   - Every edit writes directly to the owning mod's live config object and invokes its native save hook so native menus and PackCore config backups stay in sync.
 - **Crash-Proof Two-Tier Adapter Isolation**
@@ -37,7 +40,7 @@ A unified settings hub, global fuzzy search, and drag-and-drop HUD canvas for po
 - `\` (Backslash) — Open SkyHub Settings Hub (rebindable under Controls → SkyHub)
 - `]` (Right Bracket) — Open Unified HUD Canvas
 - `Tab` — Switch between Settings Hub and Unified HUD Canvas
-- `/skyhub` or `/shhub` — Open Settings Hub
+- `/skyhub`, `/skyhub config`, or `/shhub` — Open Settings Hub
 - `/skyhub hud` — Open Unified HUD Canvas
+- `/skyhub settings` — Open SkyHub's own mod settings (also via ModMenu)
 - `/skyhub reload` — Re-index all live mod registries
-

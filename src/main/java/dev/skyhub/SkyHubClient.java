@@ -8,8 +8,10 @@ import dev.skyhub.adapter.mod.OdinAdapter;
 import dev.skyhub.adapter.mod.SkyHanniAdapter;
 import dev.skyhub.adapter.mod.SkyblockerAdapter;
 import dev.skyhub.adapter.mod.StellaAdapter;
+import dev.skyhub.config.SkyHubConfig;
 import dev.skyhub.registry.UnifiedRegistry;
 import dev.skyhub.ui.SkyHubScreen;
+import dev.skyhub.ui.SkyHubSettingsScreen;
 import dev.skyhub.ui.UnifiedHudCanvasScreen;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -36,6 +38,7 @@ public final class SkyHubClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        SkyHubConfig.load();
         registerAdapters();
         registerKeyMappings();
         registerCommands();
@@ -94,9 +97,19 @@ public final class SkyHubClient implements ClientModInitializer {
                     mc.execute(() -> mc.gui.setScreen(new SkyHubScreen(null)));
                     return 1;
                 })
+                .then(ClientCommands.literal("config").executes(ctx -> {
+                    Minecraft mc = Minecraft.getInstance();
+                    mc.execute(() -> mc.gui.setScreen(new SkyHubScreen(null)));
+                    return 1;
+                }))
                 .then(ClientCommands.literal("hud").executes(ctx -> {
                     Minecraft mc = Minecraft.getInstance();
                     mc.execute(() -> mc.gui.setScreen(new UnifiedHudCanvasScreen(null)));
+                    return 1;
+                }))
+                .then(ClientCommands.literal("settings").executes(ctx -> {
+                    Minecraft mc = Minecraft.getInstance();
+                    mc.execute(() -> mc.gui.setScreen(new SkyHubSettingsScreen(null)));
                     return 1;
                 }))
                 .then(ClientCommands.literal("reload").executes(ctx -> {

@@ -38,4 +38,23 @@ class HudSnapEngineTest {
         assertEquals(480, res.y());
         assertTrue(res.guides().isEmpty());
     }
+
+    @Test
+    void resizesFromSouthEastAndNorthWestCornersKeepingOppositeAnchored() {
+        // Base 100x40 at (100, 100). Drag SE handle to (300, 180) -> 2.0x scale, top-left stays (100, 100)
+        var se = HudSnapEngine.computeCornerResize(
+            HudSnapEngine.ResizeCorner.SE, 100, 100, 300, 180, 100, 40, 32, 1000, 600
+        );
+        assertEquals(2.0, se.scale(), 1e-4);
+        assertEquals(100, se.x());
+        assertEquals(100, se.y());
+
+        // Drag NW handle with opposite anchor at (300, 200) to (150, 140) -> 1.5x scale -> new top-left (150, 140)
+        var nw = HudSnapEngine.computeCornerResize(
+            HudSnapEngine.ResizeCorner.NW, 300, 200, 150, 140, 100, 40, 32, 1000, 600
+        );
+        assertEquals(1.5, nw.scale(), 1e-4);
+        assertEquals(150, nw.x());
+        assertEquals(140, nw.y());
+    }
 }

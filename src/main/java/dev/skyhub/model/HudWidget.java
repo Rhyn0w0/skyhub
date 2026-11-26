@@ -118,7 +118,7 @@ public final class HudWidget {
 
     public void setScale(double scale) {
         if (scaleSetter == null) return;
-        double clamped = Math.max(0.25, Math.min(4.0, Math.round(scale * 20.0) / 20.0));
+        double clamped = Math.max(0.25, Math.min(4.0, Math.round(scale * 100.0) / 100.0));
         try {
             scaleSetter.accept(clamped);
             dirty = true;
