@@ -1,0 +1,20 @@
+{
+  "key.category.skyhub.main": "SkyHub",
+  "key.skyhub.open_hub": "Open SkyHub Settings",
+  "key.skyhub.open_hud": "Open Unified HUD Canvas",
+  "skyhub.title": "SkyHub",
+  "skyhub.subtitle": "SkyBlock Enhanced 5.4.9",
+  "skyhub.search.placeholder": "Search settings across all mods...",
+  "skyhub.filter.on_only": "ON Only",
+  "skyhub.filter.skyblock_only": "SkyBlock",
+  "skyhub.filter.all_mods": "All Mods",
+  "skyhub.button.hud_canvas": "HUD Canvas",
+  "skyhub.button.refresh": "Refresh",
+  "skyhub.button.native_menu": "Native Menu",
+  "skyhub.button.native_hud": "Native HUD",
+  "skyhub.hud.title": "SkyHub — Unified HUD Canvas",
+  "skyhub.hud.back": "Settings Hub",
+  "skyhub.hud.save": "Save & Close",
+  "skyhub.hud.reset": "Reset Selected",
+  "skyhub.hud.show_hidden": "Show Hidden"
+}

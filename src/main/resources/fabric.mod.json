@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "skyhub",
+  "version": "${version}",
+  "name": "SkyHub",
+  "description": "Unified settings hub, fuzzy search, and drag-and-drop HUD canvas for SkyBlock Enhanced (v5.4.9 / MC 26.2).",
+  "authors": [
+    "SkyHub"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/skyhub/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.skyhub.SkyHubClient"
+    ],
+    "modmenu": [
+      "dev.skyhub.compat.SkyHubModMenu"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": "~${minecraft_version}",
+    "java": ">=25",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": "*",
+    "skyhanni": "*",
+    "skyblocker": "*",
+    "odin": "*",
+    "skyocean": "*",
+    "packcore": "*"
+  }
+}
