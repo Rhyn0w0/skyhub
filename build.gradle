@@ -90,7 +90,7 @@ modrinth {
     gameVersions = [project.minecraft_version.toString()]
     loaders = ["fabric"]
     changelog = System.getenv("RELEASE_CHANGELOG") ?: "See https://github.com/Rhyn0w0/skyhub/releases for details."
-    syncBodyFrom = rootProject.file("README.md").text
+    syncBodyFrom = rootProject.file("README.md").text.replaceFirst(/(?s)^<img[^>]*>\s*/, "")
     dependencies {
         required.project "fabric-api"
         optional.project "modmenu"
