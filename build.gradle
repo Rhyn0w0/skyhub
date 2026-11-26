@@ -1,9 +1,10 @@
 plugins {
     id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'com.modrinth.minotaur' version "${minotaur_version}"
     id 'maven-publish'
 }
 
-version = project.mod_version
+version = System.getenv("SKYHUB_VERSION") ?: project.mod_version
 group = project.maven_group
 
 base {
@@ -33,9 +34,9 @@ dependencies {
 }
 
 processResources {
-    def modVersion = project.version
-    def mcVersion = project.minecraft_version
-    def loaderVersion = project.loader_version
+    def modVersion = project.version.toString()
+    def mcVersion = project.minecraft_version.toString()
+    def loaderVersion = project.loader_version.toString()
 
     inputs.property "version", modVersion
     inputs.property "minecraft_version", mcVersion
@@ -70,5 +71,28 @@ jar {
     inputs.property "archivesName", archiveBase
     from("LICENSE") {
         rename { "${it}_${archiveBase}" }
+    }
+}
+
+def resolvedVersionStr = project.version.toString()
+def inferredVersionType = System.getenv("MODRINTH_VERSION_TYPE") ?: (
+    resolvedVersionStr.contains("alpha") ? "alpha" :
+    resolvedVersionStr.contains("beta") ? "beta" : "release"
+)
+
+modrinth {
+    token = System.getenv("MODRINTH_TOKEN")
+    projectId = (System.getenv("MODRINTH_PROJECT_ID") ?: project.findProperty("modrinth_project_id") ?: "").toString()
+    versionNumber = resolvedVersionStr
+    versionName = "SkyHub ${resolvedVersionStr}"
+    versionType = inferredVersionType
+    uploadFile = tasks.jar
+    gameVersions = [project.minecraft_version.toString()]
+    loaders = ["fabric"]
+    changelog = System.getenv("RELEASE_CHANGELOG") ?: "See https://github.com/Rhyn0w0/skyhub/releases for details."
+    syncBodyFrom = rootProject.file("README.md").text
+    dependencies {
+        required.project "fabric-api"
+        optional.project "modmenu"
     }
 }

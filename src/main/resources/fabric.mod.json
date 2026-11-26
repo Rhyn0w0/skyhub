@@ -5,9 +5,13 @@
   "name": "SkyHub",
   "description": "Unified settings hub, fuzzy search, and drag-and-drop HUD canvas for SkyBlock Enhanced (v5.4.9 / MC 26.2).",
   "authors": [
-    "SkyHub"
+    "Rhyn0w0"
   ],
-  "contact": {},
+  "contact": {
+    "homepage": "https://github.com/Rhyn0w0/skyhub",
+    "sources": "https://github.com/Rhyn0w0/skyhub",
+    "issues": "https://github.com/Rhyn0w0/skyhub/issues"
+  },
   "license": "MIT",
   "icon": "assets/skyhub/icon.png",
   "environment": "client",

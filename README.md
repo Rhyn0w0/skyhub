@@ -1,4 +1,4 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
+<img src="assets/icon-256.png" width="64" height="64" alt="SkyHub icon">
 
 # SkyHub
 
@@ -50,3 +50,18 @@ Requires **Java 25** (matching Minecraft 26.2).
 ```
 
 The built mod JAR is written to `build/libs/skyhub-*.jar`. Drop it directly into your SkyBlock Enhanced 5.4.9 instance's `mods/` folder.
+
+## Releasing (GitHub Releases & Modrinth)
+
+Pushing a version tag (e.g. `v0.1.0-alpha.1`) triggers [release.yml](.github/workflows/release.yml) to build, run tests, publish a GitHub Release with the JARs attached, and upload to Modrinth via Minotaur:
+
+```bash
+git tag v0.1.0-alpha.1
+git push origin v0.1.0-alpha.1
+```
+
+To enable automatic Modrinth uploads on tag pushes, configure these in your GitHub repository settings (**Settings → Secrets and variables → Actions**):
+
+- **Secret** `MODRINTH_TOKEN` — Modrinth PAT with `CREATE_VERSION` (and `WRITE_PROJECT` if syncing description)
+- **Variable** `MODRINTH_PROJECT_ID` — your Modrinth project ID or slug (or set `modrinth_project_id` in `gradle.properties`)
+
